@@ -13,111 +13,138 @@ namespace d2r_pwe_client
 {
     public partial class d2rpwe : Form
     {
-        private bool isStarted = false;
+
         private bool isHotIP = false;
         private GameIPService gis = new GameIPService();
         private PWEApi api = new PWEApi();
-        private Timer gameChecker = new Timer();
 
-        private Timer gameTimer = new Timer();
-        private int gameTime = 0;
-        private int checkerIteration = 0;
+        private DateTime _lastGameCheck = DateTime.Now;
+        private bool inLobby = true;
+        private string lastAddresses = "";
 
-        string currentGame = "";
+
+        private DateTime _lastGameCreated = DateTime.Now;
+        private DateTime _lastReportedGame = DateTime.Now;
+        public Timer _appTimer { get; set; }
 
         public d2rpwe()
         {
             InitializeComponent();
 
-            gameChecker.Interval = 3000;
-            gameChecker.Tick += GameChecker_Tick;
-            gameTimer.Interval = 1000;
-            gameTimer.Tick += GameTimer_Tick;
+            tbGame.Text = "Lobby / Wrong IP pool";
+
+            _appTimer = new Timer();
+            _appTimer.Interval = 1000;
+            _appTimer.Tick += _appTimer_Tick;
+            _appTimer.Start();
+
+
+            TextBox.CheckForIllegalCrossThreadCalls = false;
+        }
+
+        private void _appTimer_Tick(object sender, EventArgs e)
+        {
+            GameCreateTimer();
+            bool isGameRunning = GameNotRunning();
+
+            if (isGameRunning)
+            {
+                GameReport();
+            }
+        }
+
+        private const string NO_GAME_ADDRESS = "0.0.0.0";
+        private string _lastAddress = NO_GAME_ADDRESS;
+
+        private void GameCreateTimer()
+        {
+            tbSec.Text = string.Format("{0} s", Math.Round((DateTime.Now - _lastGameCreated).TotalSeconds));
+        }
+
+        private void GameReport()
+        {
+            if (Math.Round((DateTime.Now - _lastGameCheck).TotalSeconds) > 3)
+            {
+                _lastGameCheck = DateTime.Now;
+                Task.Run(() =>
+                {
+                    var ips = gis.getGameConnections();
+                    string ipAddresses = String.Join(";", ips.Distinct());
+                    var gameIp = _lastAddress;
+                    var _isHotIP = isHotIP;
+
+                    if (lastAddresses != ipAddresses || Math.Round((DateTime.Now - _lastReportedGame).TotalSeconds) > 15)
+                    {
+                        lastAddresses = ipAddresses;
+                        var result = api.sendGameIp(ipAddresses, gis.ProcessId, tbToken.Text);
+                        _lastReportedGame = DateTime.Now;
+                        gameIp = result.GameIp;
+                        _isHotIP = result.IsHotIp;
+                    }
+
+                    if (_isHotIP && !isHotIP)
+                    {
+                        isHotIP = true;
+                        tbGame.Text = "HOT IP";
+
+                        System.Media.SoundPlayer player = new System.Media.SoundPlayer(Properties.Resources.beep);
+                        player.Play();
+                    }
+                    else
+                    {
+                        isHotIP = _isHotIP;
+                        if (!_isHotIP)
+                        {
+                            tbGame.Text = gameIp == NO_GAME_ADDRESS ? "Lobby / Wrong IP pool" : gameIp;
+                        }
+                    }
+
+
+                    if (gameIp == NO_GAME_ADDRESS)
+                    {
+                        inLobby = true;
+                        _lastAddress = gameIp;
+                    }
+                    else
+                    {
+                        if (inLobby || gameIp != _lastAddress)
+                        {
+                            _lastGameCreated = DateTime.Now;
+                            _lastAddress = gameIp;
+                        }
+                        inLobby = false;
+                    }
+
+                });
+            }
+        }
+
+        private bool GameNotRunning()
+        {
             if (gis.ProcessId <= 0)
             {
                 tbGame.Text = "D2R not running";
+                return false;
             }
-            else
-            {
-                tbGame.Text = "Start in the lobby";
-            }
+
+            return true;
         }
 
-        private void GameTimer_Tick(object sender, EventArgs e)
-        {
-            gameTime++;
-            tbSec.Text = string.Format("{0} s", gameTime);
-        }
-
-        private void GameChecker_Tick(object sender, EventArgs e)
-        {
-            string address = gis.GetAddress().FirstOrDefault();
-            tbGame.Text = isHotIP && !string.IsNullOrWhiteSpace(address) ? "HOT IP" : (address ?? "Lobby");
-            bool _isHotIP = false;
-
-            if (!string.IsNullOrWhiteSpace(address))
-            {
-                if (currentGame != address)
-                {
-                    gameTime = 0;
-                    gameTimer.Start();
-                    currentGame = address;
-                    _isHotIP = api.sendGameIp(currentGame, tbToken.Text);
-                }
-                else if (checkerIteration % 5 == 0)
-                {
-                    _isHotIP = api.sendGameIp(currentGame, tbToken.Text);
-                }
-            }
-            else
-            {
-                if (gameTimer.Enabled || checkerIteration % 5 == 0)
-                {
-                    api.sendGameIp("0.0.0.0", tbToken.Text);
-                }
-                isHotIP = false;
-                tbSec.Text = "";
-                gameTimer.Stop();
-            }
-
-            if (_isHotIP && !isHotIP) {
-                isHotIP = true;
-                MessageBox.Show("HOT IP");
-            }
-            checkerIteration++;
-        }
-
-        private void btnStart_Click(object sender, EventArgs e)
-        {
-            if (!isStarted)
-            {
-                if (gis.ProcessId <= 0)
-                {
-                    tbGame.Text = "D2R not running";
-                    return;
-                }
-
-
-                btnStart.Text = "Stop";
-                gis.GetConnectedAddresses(true);
-                isStarted = true;
-                tbGame.Text = "Lobby";
-                gameChecker.Start();
-            }
-            else
-            {
-                btnStart.Text = "I'm in lobby";
-                isStarted = false;
-                tbGame.Text = "Start in the lobby";
-                gameChecker.Stop();
-            }
-        }
 
         private void btnVerify_Click(object sender, EventArgs e)
         {
-            bool result = api.verify(tbToken.Text);
-            if (result) MessageBox.Show("Ok");
-            if (!result) MessageBox.Show("Bad");
+            Task.Run(() =>
+            {
+                var result = api.verify(gis.ProcessId, tbToken.Text);
+                MessageBox.Show(!string.IsNullOrEmpty(result.Message) ? result.Message : (result.IsSuccess ? "Valid!" : "Bad"), "Verification");
+
+                if (result.IsSuccess)
+                {
+                    MessageBox.Show("Now the tool will play the HOT IP alert sound!\r\nHit OK to listen to the test.", "Hot IP sound alert test");
+                    System.Media.SoundPlayer player = new System.Media.SoundPlayer(Properties.Resources.beep);
+                    player.Play();
+                }
+            });
         }
     }
 }

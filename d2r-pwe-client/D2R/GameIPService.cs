@@ -21,8 +21,7 @@ namespace d2r_pwe_client.D2R
             }
         }
 
-        private List<string> baselineAddresses = new List<string>();
-        public List<string> GetConnectedAddresses(bool baseline = false)
+        public List<string> getGameConnections()
         {
             if (this.ProcessId <= 0)
             {
@@ -79,30 +78,7 @@ namespace d2r_pwe_client.D2R
                 }
             }
 
-            if (baseline)
-            {
-                baselineAddresses.Clear();
-                baselineAddresses = addressList;
-            }
-
             return addressList;
-        }
-
-        public List<string> GetAddress()
-        {
-            List<string> serverAddresses = new List<string>();
-
-            List<string> connectedAddresses = GetConnectedAddresses();
-
-            foreach (string address in connectedAddresses)
-            {
-                if (!baselineAddresses.Any(s => s.Contains(address)))
-                {
-                    serverAddresses.Add(address);
-                }
-            }
-
-            return serverAddresses;
         }
     }
 }
